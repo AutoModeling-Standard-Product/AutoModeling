@@ -8,6 +8,10 @@ import matplotlib.pyplot as plt
 from toad.plot import bin_plot, badrate_plot
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import itertools
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score,roc_curve, auc ,precision_recall_curve,average_precision_score,confusion_matrix
+import lightgbm as lgb
 
 def org_analysis(data: pd.DataFrame)-> pd.DataFrame:
     assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
@@ -39,7 +43,6 @@ def missing_check(**kwargs) -> pd.DataFrame:
     data = {
         channel: data[data.new_org.isin(orgs)] for channel, orgs in channels.items()
     }
-    
     miss_res = pd.DataFrame()
     miss_res1 = pd.DataFrame()
     for channel in tqdm.tqdm([v for v in channels.keys()]):
@@ -272,3 +275,40 @@ def detect_iv(**kwargs) -> pd.DataFrame:
     res = pd.DataFrame(res).drop_duplicates(subset=['机构', 'iv']).sort_values(by=['机构', 'iv'], ascending=False)
     res_1 = pd.DataFrame(res_1).sort_values(by=['渠道', 'iv'], ascending=False)
     return res, res_1
+
+def detect_correlation(**kwargs) -> pd.DataFrame:
+    data = kwargs.get('data').copy()
+    method = kwargs.get('method')
+    max_corr = kwargs.get('max_corr')
+    data.replace({-1111: np.nan, -999:np.nan, -1:np.nan}, inplace=True)
+    features = [v for v in data.columns if data[v].dtype!='O']
+    corrs = data[features].corr(method=method)
+    features_y = []
+    if 'new_target' in corrs.columns:
+        corr_y = pd.DataFrame(corrs.loc['new_target', :,]).reset_index()
+        corr_y.columns = ['feature', 'correlation']
+        features_y = list(set(corr_y[(abs(corr_y.correlation)>0.5)]['feature'])-set(['new_target']))
+    if len(features_y)>0:
+        display(f'{features_y}与new_target列相似性超过0.5')
+    corrs.pop('new_target')
+    corrs = corrs[~corrs.index.isin(['new_target'])]
+    corr = pd.DataFrame(
+        np.where((abs(corrs)>max_corr)&(corrs!=1), 1, 0),
+        columns=corrs.columns
+    )
+    corr.index = corr.columns
+    indices = corr.where(np.triu(corr, k=1)==1).stack().index.tolist()
+    return indices, corrs
+
+def get_fixed_lgb(max_depth=5, n_estimators=100)->lgb.LGBMClassifier:
+    params_dict = {
+        'objective':'binary',
+        'split':'gain',
+        'learning_rate':0.05,
+        'max_depth':max_depth,
+        'min_child_samples':20,
+        'min_child_weight':20,
+        'n_estimators':n_estimators,
+        'num_leaves':2^max_depth - 1}
+    clf = lgb.LGBMClassifier(**params_dict)
+    return clf

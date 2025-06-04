@@ -5,7 +5,6 @@ def drop_abnormal_ym(**kwargs)-> pd.DataFrame:
     minYmBadsample = kwargs.get("minYmBadsample")
     minYmSample = kwargs.get("minYmSample")
     assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
-    
     datasetStatis = org_analysis(data)
     datasetStatis = datasetStatis[(datasetStatis.单月坏样本数<minYmBadsample) | (datasetStatis.单月总样本数<minYmSample)]
     condition_pre = datasetStatis.apply(lambda row: (row.机构==data['new_org']) & (row.年月==data['new_date_ym']), axis=1)
@@ -13,7 +12,7 @@ def drop_abnormal_ym(**kwargs)-> pd.DataFrame:
     display(f"输入data样本数为{data.shape[0]}, 限制每个机构每月坏样本数>={minYmBadsample}, 样本数>={minYmSample}")
     data = data[~condition]
     display(f"删去异常月份后数据大小为{data.shape[0]}")
-    
+    display(data.head(1))
     return data
 
 def drop_highmiss_features(**kwargs)-> pd.DataFrame:
@@ -22,7 +21,6 @@ def drop_highmiss_features(**kwargs)-> pd.DataFrame:
     miss_channel = kwargs.get('miss_channel')
     ratio = kwargs.get("ratio")
     cnt = kwargs.get("cnt")
-    
     miss_org['是高缺失机构'] = np.where(miss_org['总缺失率']>ratio, 1, 0)
     miss_org['高缺失机构个数'] = miss_org.groupby('变量')['是高缺失机构'].transform('sum')
     miss_org = miss_org[miss_org.高缺失机构个数>cnt]
@@ -42,7 +40,6 @@ def drop_lowiv_features(**kwargs) -> pd.DataFrame:
     res_iv_channel = kwargs.get('res_iv_channel')
     miniv = kwargs.get('miniv')
     cnt = kwargs.get('cnt')
-    
     res_iv_org['是低iv机构'] = np.where(res_iv_org['iv']<miniv, 1, 0)
     res_iv_org['低iv机构数'] = res_iv_org.groupby('变量')['是低iv机构'].transform('sum')
     drop_features = res_iv_org[res_iv_org.低iv机构数>cnt]['变量']
@@ -60,110 +57,101 @@ def drop_highpsi_features(**kwargs)-> pd.DataFrame:
     res_psi_org = kwargs.get("res_psi_org")
     ratio = kwargs.get('ratio')
     cnt = kwargs.get("cnt")
-    
     res_psi_org = res_psi_org[['机构', '变量', '最大psi']].drop_duplicates(subset=['机构', '变量'])
     res_psi_org = res_psi_org[res_psi_org.最大psi>ratio]
     res_psi_org['高psi机构数'] = res_psi_org.groupby('变量')['机构'].transform('count')
     drop_features = list(res_psi_org[res_psi_org['高psi机构数'] > cnt]['变量'])
+    drop_features = list(set(drop_features).intersection(set(data.columns)))
     if len(drop_features)>0:
         display(f"变量{drop_features}, 在{cnt}以上机构数出现高psi")
+        data.drop(columns=drop_features, inplace=True)
     else:
         display("没有变量符合删去要求")
-    drop_features = list(set(drop_features).intersection(set(data.columns)))
+    return data
+
+def drop_highcorrelation_features(**kwargs) -> pd.DataFrame:
+    data = kwargs.get('data').copy()
+    res_iv_channel = kwargs.get('res_iv_channel')
+    indices = kwargs.get('indices')
+    channel = kwargs.get('channel')
+    display(f'根据{channel}下iv值删去变量, 遍历高相似变量对直到变量对全为空, 每次迭代删除包含iv值最小的变量所在变量对')
+    features = []
+    drop_features = []
+    for v in indices:
+        features.append(v[0])
+        features.append(v[1])
+    while len(indices)>1:
+        res = res_iv_channel[(res_iv_channel.变量.isin(features))&(res_iv_channel.渠道==channel)]
+        drop_ = list(res[res.iv==min(res.iv)]['变量'])
+        drop_features.append(drop_)
+        indices = [v for v in indices if v[0] not in drop_ and v[1] not in drop_]
+        features = [v for v in features if v not in drop_]
+
+    drop_features = list(set(list(itertools.chain.from_iterable(drop_features))).intersection(set(data.columns)))
+    display(f'共删去{len(drop_features)}个变量')
     data.drop(columns=drop_features, inplace=True)
     return data
 
-def dataset_analysis(**kwargs)->Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:  
-    kwargs_ = kwargs
+def drop_highnoise_features(**kwargs)-> Tuple[pd.DataFrame, pd.DataFrame]:
     data = kwargs.get('data').copy()
-    bank_orgs = kwargs.get("bank_orgs")
-    nonbank_orgs = kwargs.get("nonbank_orgs")
-    
-    display("----------------------------------")
-    display('>>分｜不分机构统计坏样率')
-    highmissing = missing_check(**kwargs)
-    highmissing = highmissing[['机构', '变量', '单机构缺失率', '单机构坏样率', '总体缺失率', '总体坏样率']]
-    
-    display("----------------------------------")
-    display('>>分机构｜渠道统计变量iv｜平均iv, 不分机构渠道统计变量iv')
-    res_iv_0 = calculate_meaniv_channel(**kwargs)
-    res_iv_1 = calculate_iv_traditionally(**kwargs)
-    res_iv_1.rename(columns={'iv': '总体iv'}, inplace=True)
-    
-    display("----------------------------------")
-    display(">>分渠道季度滑动统计变量iv, 分渠道逐月统计变量psi")
-    display(">>银行")
-    kwargs_['channel'] = '银行'
-    data_ = data[data.new_org.isin(bank_orgs)]
-    kwargs_.update({'data': data_})
-    res_iv_20 = calculate_dynamiciv_channel(**kwargs_)
-    res_psi_10 = calculate_psi_channel(**kwargs_)
-    
-    display(">>非银")
-    kwargs_.update({'channel':'非银'})
-    data_ = data[data.new_org.isin(nonbank_orgs)]
-    kwargs_.update({'data': data_})
-    res_iv_21 = calculate_dynamiciv_channel(**kwargs_)
-    res_psi_11 = calculate_psi_channel(**kwargs_)
-    
-    display(">>三方")
-    kwargs_.update({'channel':'三方'})
-    data_ = data[~data.new_org.isin(nonbank_orgs+bank_orgs)]
-    kwargs_.update({'data': data_})
-    res_iv_22 = calculate_dynamiciv_channel(**kwargs_)
-    res_psi_12 = calculate_psi_channel(**kwargs_)
-    
-    display(">>整体")
-    kwargs_.update({'channel':'整体'})
-    data_ = data.copy()
-    kwargs_.update({'data': data_})
-    res_iv_23 = calculate_dynamiciv_channel(**kwargs_)
-    res_psi_13 = calculate_psi_channel(**kwargs_)
-    
-    res_iv_2 = pd.concat([res_iv_20, res_iv_21, res_iv_22, res_iv_23], axis=0)
-    res_psi_1 = pd.concat([res_psi_10, res_psi_11, res_psi_12, res_psi_13], axis=0)
-    
-    display("----------------------------------")
-    display(">>分｜不分机构逐月逐季度统计变量psi")
-    res_psi_0 = calculate_psi_org(**kwargs)
-    
-    res_psi_2 = calculate_dypsi_org(**kwargs)
-    
-    data = kwargs.get('data')
-    data['new_org'] = '整体'
-    kwargs.update({'data': data})
-    res_psi_1_ = calculate_psi_org(**kwargs)
-    res_psi_1_.columns = ['渠道', '变量', '分渠道当前月份', '分渠道psi', '分渠道月份统计总数', '分渠道高psi月份计数', '渠道下最大psi']
-    res_psi_1 = pd.concat([res_psi_1_, res_psi_1], axis=0)
-    res_psi_2_ = calculate_dypsi_org(**kwargs)
-    res_psi_2 = pd.concat([res_psi_2_, res_psi_2], axis=0)
-    
-    table1 = pd.merge(highmissing, res_iv_0[['渠道', '机构','变量','单机构iv', '渠道下平均iv', '渠道缺失率']], on=['机构', '变量'], how='right')
-    table1 = table1.merge(res_iv_1, on=['变量'], how='left')
-    table1 = pd.merge(res_psi_0[['机构', '变量', '单机构下最大psi']].drop_duplicates(subset=['机构', '变量']), table1, on=['机构', '变量'], how='right')
-    table1 = pd.merge(res_psi_1[['渠道', '变量', '渠道下最大psi']].drop_duplicates(subset=['渠道', '变量']), table1, on=['渠道', '变量'], how='right')
-    table1 = pd.merge(res_psi_2[['机构', '变量', '季度下最大psi']].drop_duplicates(subset=['机构', '变量']), table1, on=['机构', '变量'], how='right')
-    table1 = table1[['渠道', '机构', '变量', '单机构iv', '渠道下平均iv', '总体iv', '单机构下最大psi', '渠道下最大psi', '季度下最大psi',
-                     '单机构缺失率', '单机构坏样率', '总体缺失率', '总体坏样率', '渠道缺失率']]
-    table1['渠道下平均iv'] = np.round(table1['渠道下平均iv'], 3)
-    table1['总体iv'] = np.round(table1['总体iv'], 3)
-    table1 = table1.sort_values(by=['渠道', '机构', '总体iv', '渠道下平均iv', '单机构iv'], ascending=False)
-    
-    table1_ = table1[['机构', '变量', '单机构iv', '单机构下最大psi', '单机构缺失率']].drop_duplicates(subset=['机构', '变量'])
-    table1_['flag'] = np.where((table1_.单机构iv>0.02) & (table1_.单机构缺失率<0.95) & (table1_.单机构下最大psi<0.1), 1, 0)
-    table1_ = table1_.groupby('机构').apply(lambda x: pd.Series({
-        '机构':x['机构'].iloc[0],
-        '单机构下变量合格率': np.round(np.mean(x['flag']), 4),
-        '单机构下变量合格个数':np.sum(x['flag'])
-    })).reset_index(drop=True)
-    table1 = table1.merge(table1_, on=['机构'], how='left')
-    table1_ = table1[['渠道', '变量', '渠道下平均iv', '渠道下最大psi', '渠道缺失率']].drop_duplicates(subset=['渠道', '变量'])
-    table1_['flag'] = np.where((table1_.渠道下平均iv>0.02) & (table1_.渠道缺失率<0.95) & (table1_.渠道下最大psi<0.1), 1, 0)
-    table1_ = table1_.groupby('渠道').apply(lambda x: pd.Series({
-        '渠道':x['渠道'].iloc[0],
-        '渠道下变量合格率': np.round(np.mean(x['flag']), 4),
-        '渠道下变量合格个数':np.sum(x['flag'])
-    })).reset_index(drop=True)
-    table1 = table1.merge(table1_, on=['渠道'], how='left')
-    
-    return table1, res_iv_2, res_psi_0, res_psi_1, res_psi_2
+    assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
+    max_depth = kwargs.get('max_depth')
+    n_estimators = kwargs.get('n_estimators')
+    features = list(set([v for v in data.columns if data[v].dtype!='O'])-set(['new_target']))
+    data.replace({-1111:np.nan, -999:np.nan, -1:np.nan}, inplace=True)
+    data = data[data.new_target.isin([0, 1])]
+    X = data[features]
+    Y = data['new_target']
+    Y_permuted = np.random.permutation(Y)
+    for i in range(20):
+        Y_permuted = np.random.permutation(Y_permuted)
+    res_df_ = pd.DataFrame()
+    res_df_permuted_ = pd.DataFrame()
+    for idx in np.arange(0, 2):
+        random_n = np.random.randint(30)
+        X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.3, random_state=random_n)
+        X_train_, X_test_, y_train_, y_test_ = train_test_split(X, Y_permuted, test_size=0.3, random_state=random_n)
+        clf = get_fixed_lgb(max_depth, n_estimators)
+        clf_ = get_fixed_lgb(max_depth, n_estimators)
+        clf.fit(X_train,y_train)
+        clf_.fit(X_train_,y_train_)
+        train = clf.predict_proba(X_train)[:, 1]
+        test = clf.predict_proba(X_test)[:, 1]
+        train_ = clf_.predict_proba(X_train_)[:, 1]
+        test_ = clf_.predict_proba(X_test_)[:, 1]
+        auc_train = round(roc_auc_score(y_train, train), 3)
+        auc_test = round(roc_auc_score(y_test, test), 3)
+        auc_train_ = round(roc_auc_score(y_train_, train_), 3)
+        auc_test_ = round(roc_auc_score(y_test_, test_), 3)
+        res_df = pd.DataFrame({'name':clf.booster_.feature_name(),
+                               'gain':clf.booster_.feature_importance(importance_type='gain')})
+        res_df_permuted = pd.DataFrame({'name':clf_.booster_.feature_name(),
+                               'gain':clf_.booster_.feature_importance(importance_type='gain')})
+        res_df = res_df[res_df.gain>0]
+        res_df = res_df.sort_values(by='gain', ascending=False)
+        res_df_ = pd.concat([res_df_, res_df], axis=0) 
+        res_df_permuted = res_df_permuted[res_df_permuted.gain>0]
+        res_df_permuted = res_df_permuted.sort_values(by='gain', ascending=False)
+        res_df_permuted_ = pd.concat([res_df_permuted_, res_df_permuted], axis=0)
+        print("(AUC) train:{}, test:{}, train_permuted:{}, test_permuted:{}".format(auc_train, auc_test, auc_train_, auc_test_))
+    res = res_df_.groupby('name').apply(lambda x: pd.Series({
+        'name':x['name'].iloc[0],
+        'gain': round(np.mean(x['gain']), 0)
+    }))
+    res = pd.DataFrame(res).drop_duplicates(subset=['name'])
+    res_permuted = res_df_permuted_.groupby('name').apply(lambda x: pd.Series({
+        'name':x['name'].iloc[0],
+        'gain': round(np.mean(x['gain']), 0)
+    }))
+    res_permuted = pd.DataFrame(res_permuted).drop_duplicates(subset=['name'])
+    res = res.sort_values(by=['gain'], ascending=False).reset_index(drop=True)
+    res_permuted = res_permuted.sort_values(by=['gain'], ascending=False).reset_index(drop=True)
+    res_ = pd.merge(res, res_permuted, on=['name'], how='left')
+    res_.columns = ['name', 'gain', 'gain_permuted']
+    drop_features = list(res_[abs(res_.gain-res_.gain_permuted)<50]['name'])
+    if len(drop_features) > 0:
+        display(f"共有{len(drop_features)}个变量存在过高噪音, 翻转y后建模gain值差异小于50")
+        data.drop(columns=drop_features, inplace=True)
+    else:
+        display('没有符合条件的高噪音变量')
+    return data, res_
