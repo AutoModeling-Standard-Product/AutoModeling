@@ -1,17 +1,4 @@
-import pandas as pd
-import numpy as np
-import pickle
-import tqdm
-from typing import Tuple
-import toad
-import matplotlib.pyplot as plt
-from toad.plot import bin_plot, badrate_plot
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
-import itertools
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score,roc_curve, auc ,precision_recall_curve,average_precision_score,confusion_matrix
-import lightgbm as lgb
+from utils.requirements import *
 
 def org_analysis(data: pd.DataFrame)-> pd.DataFrame:
     assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
@@ -112,6 +99,7 @@ def get_dataset(**kwargs) -> pd.DataFrame:
         data.rename(columns={date_colName:'new_date', y_colName:'new_target', org_colName:'new_org'}, inplace=True)
         data['new_date'] = data['new_date'].astype(str).apply(lambda x: str(x).replace('-', '')[:8])
         data['new_date_ym'] = data['new_date'].apply(lambda x: str(x)[:6])
+        data = data.reset_index(drop=True)
     except Exception as e:
         display(e+'数据获取失败')
         return None
@@ -312,3 +300,22 @@ def get_fixed_lgb(max_depth=5, n_estimators=100)->lgb.LGBMClassifier:
         'num_leaves':2^max_depth - 1}
     clf = lgb.LGBMClassifier(**params_dict)
     return clf
+
+def top_5_lift(pred_, data):
+    y = data.get_label()
+    pred = 1 / (1 + np.exp(-pred_))
+    lift5 = _get_lift(y, pred, 0.05)
+    return '5%lift', lift5, True
+def top_10_lift(pred_, data):
+    y = data.get_label()
+    pred = 1 / (1 + np.exp(-pred_))
+    lift10 = _get_lift(y, pred, 0.1)
+    return '10%lift', lift10, True 
+def _get_lift(y, pred, k):
+        n_top = int(len(y) * k)
+        top_indices = pd.Series(pred).sort_values(ascending=False).head(n_top).index
+        return y[top_indices].mean() / y.mean()
+def _get_ks(model, X, y):
+        pred = model.predict(X)
+        ks = toad.metrics.KS(pred, y)
+        return ks
