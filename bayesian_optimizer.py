@@ -70,7 +70,7 @@ def bayesian_search_params(
         }
         train_params = {k: v for k, v in train_params.items() if v}
         mean_tr_ks, mean_val_ks, mean_oos_ks = train_epoch(X_tr, X_val, y_tr, y_val, w_tr, tr_orgidx, val_orgidx, train_params, fobj=None)
-        mean_ks_tr_val_diff = abs(mean_tr_ks - mean_val_ks)
+        mean_ks_tr_val_diff = abs(mean_tr_ks - mean_val_ks) / mean_tr_ks
         if mean_ks_tr_val_diff <= max_gap and mean_val_ks > min_ks:
             return mean_val_ks
         else:
