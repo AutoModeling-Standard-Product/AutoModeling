@@ -87,3 +87,41 @@ def resampling(
                 return
     except Exception as e:
             display(f'重采样失败：{e}')
+
+
+
+def re_weight_by_org(y_tr: pd.Series, tr_orgidx: dict, scale: float = 1.0, broadcast_with_tar: bool = False):
+    """
+    :param y_tr                 训练集目标变量
+    :param tr_orgidx            机构标识：用于区分样本权重
+    :param scale                缩放级别：格式为float，0.0为无缩放，1.0为线性缩放
+    :param broadcast_with_tar   是否基于目标变量划分权重，True代表同时使用机构标识和目标变量进行二维划分
+    """
+    def index_dict_2_series(d: dict):
+        values = []
+        indices = []
+        for key, index_list in d.items():
+            values.extend([key] * len(index_list))
+            indices.extend(index_list)
+        return pd.Series(values, index=indices)
+    # 将orgid转为Series以便与y_tr拼接
+    sr_org = index_dict_2_series(tr_orgidx)
+    if broadcast_with_tar:
+        df_temp = pd.DataFrame({
+            'tar': y_tr,
+            'org': sr_org
+        })
+        df_group = df_temp.pivot_table(index='tar', columns='org', aggfunc='size', fill_value=0)
+        max_val = df_group.max().max()
+        df_group = (max_val / df_group) ** scale
+        df_group = df_group.stack().to_dict()
+
+        value_map = lambda row: df_group.get((row['tar'], row['org']), None)
+        df_temp['wgt'] = df_temp.apply(value_map, axis=1)
+        return df_temp['wgt']
+    else:
+        sr_temp = sr_org.value_counts()
+        max_val = sr_temp.max()
+        sr_temp = (max_val / sr_temp) ** scale
+        sr_temp = sr_temp.to_dict()
+        return index_dict_2_series({sr_temp[key]: tr_orgidx[key] for key in tr_orgidx.keys()})
