@@ -20,3 +20,4 @@ from scipy.stats import ks_2samp
 import time
 from functools import partial
 from multiprocessing import Pool
+import shap
