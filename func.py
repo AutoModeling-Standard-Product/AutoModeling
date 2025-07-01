@@ -2,7 +2,7 @@ from utils.requirements import *
 
 def org_analysis(data: pd.DataFrame)-> pd.DataFrame:
     assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
-    display('开始分析机构样本情况')
+    print('开始分析机构样本情况')
     try:
         datasetStatis = data[['new_org', 'new_date_ym', 'new_target']].groupby(['new_org', 'new_date_ym']).apply(lambda x:pd.Series({
             '机构': x['new_org'].iloc[0],
@@ -19,8 +19,8 @@ def org_analysis(data: pd.DataFrame)-> pd.DataFrame:
         datasetStatis = datasetStatis[['机构', '年月', '单月坏样本数', '单月总样本数', '单月坏样率',
                                       '总坏样本数', '总样本数', '总坏样率']].sort_values(by=['机构', '年月'])
     except Exception as e:
-        display("机构样本分析出现错误"+e)
-    display('机构样本情况分析结束')
+        print("机构样本分析出现错误"+e)
+    print('机构样本情况分析结束')
     return datasetStatis
 
 def missing_check(**kwargs) -> pd.DataFrame:
@@ -47,7 +47,7 @@ def missing_check(**kwargs) -> pd.DataFrame:
                 }, index=['0']))
                 miss_res = pd.concat([miss_res, tmp_res], axis=0)
             except Exception as e:
-                display(f"机构{org}下{col}计算缺失率失败, {e}")
+                print(f"机构{org}下{col}计算缺失率失败, {e}")
             try:
                 tmp_res_ = pd.DataFrame({'渠道': channel, 
                                         '变量': col, 
@@ -58,7 +58,7 @@ def missing_check(**kwargs) -> pd.DataFrame:
                                         '总缺失率': np.round(((sub_data[col]==-1)|(sub_data[col]==-999)|(sub_data[col]==-1111)|(sub_data[col]==np.nan)).mean(), 3)}, index=['0'])
                 miss_res1 = pd.concat([miss_res1, tmp_res_], axis=0)
             except Exception as e:
-                display(f"渠道{channel}下计算{col}缺失率失败, {e}")
+                print(f"渠道{channel}下计算{col}缺失率失败, {e}")
     miss_res = miss_res.reset_index(drop=True).drop_duplicates(subset=['机构', '变量']).sort_values(by=['机构', '总缺失率'], ascending=False)
     miss_res1 = miss_res1.reset_index(drop=True).sort_values(by=['渠道', '总缺失率'], ascending=False)
     return miss_res, miss_res1
@@ -83,25 +83,32 @@ def get_dataset(**kwargs) -> pd.DataFrame:
             try:
                 data = pickle.load(data_pth, parse_dates=[date_colName], encoding=data_encode)
             except Exception as e3:
-                display(e1+"   "+e2+"   "+e3)
+                print(e1+"   "+e2+"   "+e3)
                 return
     try:
-        display(f'原始数据有{data.shape[0]}条, 根据{key_colNames}去重且只保留标签列[0,1]的数据')
+        print(f'原始数据有{data.shape[0]}条, 根据{key_colNames}去重且只保留标签列[0,1]的数据')
         data = data[data[y_colName].isin([0, 1])].drop_duplicates(subset=key_colNames)
-        display(f'去重后数据有{data.shape[0]}条')
+        print(f'去重后数据有{data.shape[0]}条')
+        
+        if 'Unnamed: 0' in data.columns:
+            data.drop(columns=['Unnamed: 0'], inplace=True)
+        
+        for fea in data.columns:
+            if data[fea].is_unique:
+                print(f"{fea}全为{data[fea].iloc[0]}, 去除该列")
+                data.drop(columns=fea, inplace=True)
         
         if org_colName is None:
             data[org_colName] = 'unique'
-            display(f'输入对的org_colName为空, 将该列设置为唯一值[unique]')
-        if 'Unnamed: 0' in data.columns:
-            data.drop(columns=['Unnamed: 0'], inplace=True)
-        display(f"{y_colName}, {org_colName}被重命名为new_target, new_org; {date_colName}被格式化为new_date, new_date_ym两列")
+            print(f'输入对的org_colName为空, 将该列设置为唯一值[unique]')
+        
+        print(f"{y_colName}, {org_colName}被重命名为new_target, new_org; {date_colName}被格式化为new_date, new_date_ym两列")
         data.rename(columns={date_colName:'new_date', y_colName:'new_target', org_colName:'new_org'}, inplace=True)
         data['new_date'] = data['new_date'].astype(str).apply(lambda x: str(x).replace('-', '')[:8])
         data['new_date_ym'] = data['new_date'].apply(lambda x: str(x)[:6])
         data = data.reset_index(drop=True)
     except Exception as e:
-        display(e+'数据获取失败')
+        print(e+'数据获取失败')
         return None
     return data
 
@@ -120,8 +127,10 @@ def calculate_psi(base, current):
             fraction = index - lower_idx
             edges.append(sorted_base[lower_idx]+fraction*(sorted_base[upper_idx]-sorted_base[lower_idx]))
     
+    # 扩展 current，将在edges外的数据归于距离最近的一箱
+    current_clipped = np.clip(current, edges[0], edges[-1])
     base_cnt, _ = np.histogram(base, bins=edges)
-    current_cnt, _ = np.histogram(current, bins=edges)
+    current_cnt, _ = np.histogram(current_clipped, bins=edges)
     base_percentage = 1.0 * base_cnt / base_cnt.sum()
     current_percentage = 1.0 * current_cnt / current_cnt.sum()
     
@@ -153,7 +162,18 @@ def detect_psi(**kwargs)-> pd.DataFrame:
         for org in sub_data.new_org.unique():
             try:
                 data_tmp = sub_data[sub_data.new_org==org].copy()
-                data_tmp['new_date_bin'] = pd.qcut(data_tmp['new_date'], q=4, labels=[0, 1, 2, 3])
+                
+                if len(data_tmp.new_date.unique()) < 4:
+                    # 根据日期大小赋予递增唯一值
+                    ranked_date = data_tmp['new_date'].rank(method='first')
+                    data_tmp['new_date_bin'] = pd.qcut(ranked_date, q=4, labels=[0, 1, 2, 3])
+                else:
+                    try:
+                        data_tmp['new_date_bin'] = pd.qcut(data_tmp['new_date'], q=4, labels=[0, 1, 2, 3])
+                    except:
+                        data_tmp['new_date_bin'] = pd.qcut(data_tmp['new_date'], q=5, labels=[0, 1, 2, 3], duplicates='drop')
+                        assert len(data_tmp['new_date_bin'].unique()) == 4, f"{org}下4分箱失败"
+                
                 data_tmp_ = data_tmp.groupby('new_date_bin')['new_date'].agg(['count'])
                 for col in list(set(data_tmp.columns)-set(['new_org', 'new_date', 'new_date_ym', 'new_target', 'new_date_bin'])):
                     if data_tmp[col].dtype != 'O':
@@ -167,9 +187,15 @@ def detect_psi(**kwargs)-> pd.DataFrame:
                                             '样本数':int(data_tmp_[data_tmp_.index==idx]['count'].values), 
                                             '区间psi': psi_tmp})
             except Exception as e:
-                display(f"机构{org}下{col}计算psi失败, {e}")
+                print(f"机构{org}下{col}计算psi失败, {e}")
         
-        sub_data['new_date_bin'] = pd.qcut(sub_data['new_date'], q=4, labels=[0, 1, 2, 3])
+        if len(sub_data.new_date.unique()) < 4:
+            # 根据日期大小赋予递增唯一值
+            ranked_date = sub_data['new_date'].rank(method='first')
+            sub_data['new_date_bin'] = pd.qcut(ranked_date, q=4, labels=[0, 1, 2, 3])
+        else:
+            sub_data['new_date_bin'] = pd.qcut(sub_data['new_date'], q=4, labels=[0, 1, 2, 3])
+        
         sub_data_ = sub_data.groupby('new_date_bin')['new_date'].agg(['count'])
         for col in list(set(sub_data.columns)-set(['new_org', 'new_date', 'new_date_ym', 'new_target', 'new_date_bin'])):
             try:
@@ -184,7 +210,7 @@ def detect_psi(**kwargs)-> pd.DataFrame:
                                         '样本数':int(sub_data_[sub_data_.index==idx]['count'].values), 
                                         '区间psi': psi_tmp})
             except Exception as e:
-                display(f'渠道{channel}下{col}计算失败, {e}')
+                print(f'渠道{channel}下{col}计算失败, {e}')
     
     psi_res = pd.DataFrame(psi_res)
     psi_res1 = pd.DataFrame(psi_res1)
@@ -224,9 +250,10 @@ def trend_detect(x: pd.Series, y: pd.Series, egde_dict: dict) -> Tuple[float, pd
     iv = toad.quality(data[['x', 'y']], 'y', iv_only=True).loc['x', 'iv']
     
     bin_plot(data, x='x', target='y')
-    plt.show()
+    fig = plt.gcf()
+    plt.close()
     
-    return iv, woe
+    return iv, woe, fig
 
 def detect_iv(**kwargs) -> pd.DataFrame:
     data = kwargs.get("data").copy()
@@ -250,7 +277,7 @@ def detect_iv(**kwargs) -> pd.DataFrame:
                         iv, _, _ = calculate_iv(tmp_data[col], tmp_data['new_target'], method, bins)
                         res.append({'机构':org, '变量': col, 'iv': iv})
                     except Exception as e:
-                        display(f"机构{org}下{col}计算iv失败, {e}")
+                        print(f"机构{org}下{col}计算iv失败, {e}")
         
         for col in list(set(sub_data.columns)-set(['new_org', 'new_date', 'new_date_ym', 'new_target'])):
              if sub_data[col].dtype != 'O':
@@ -258,7 +285,7 @@ def detect_iv(**kwargs) -> pd.DataFrame:
                         iv, _, _ = calculate_iv(sub_data[col], sub_data['new_target'], method, bins)
                         res_1.append({'渠道':channel, '变量': col, 'iv': iv})
                     except Exception as e:
-                        display(f"渠道{channel}下{col}计算iv失败, {e}")
+                        print(f"渠道{channel}下{col}计算iv失败, {e}")
     
     res = pd.DataFrame(res).drop_duplicates(subset=['机构', 'iv']).sort_values(by=['机构', 'iv'], ascending=False)
     res_1 = pd.DataFrame(res_1).sort_values(by=['渠道', 'iv'], ascending=False)
@@ -277,7 +304,7 @@ def detect_correlation(**kwargs) -> pd.DataFrame:
         corr_y.columns = ['feature', 'correlation']
         features_y = list(set(corr_y[(abs(corr_y.correlation)>0.5)]['feature'])-set(['new_target']))
     if len(features_y)>0:
-        display(f'{features_y}与new_target列相似性超过0.5')
+        print(f'{features_y}与new_target列相似性超过0.5')
     corrs.pop('new_target')
     corrs = corrs[~corrs.index.isin(['new_target'])]
     corr = pd.DataFrame(
@@ -300,22 +327,3 @@ def get_fixed_lgb(max_depth=5, n_estimators=100)->lgb.LGBMClassifier:
         'num_leaves':2^max_depth - 1}
     clf = lgb.LGBMClassifier(**params_dict)
     return clf
-
-def top_5_lift(pred_, data):
-    y = data.get_label()
-    pred = 1 / (1 + np.exp(-pred_))
-    lift5 = _get_lift(y, pred, 0.05)
-    return '5%lift', lift5, True
-def top_10_lift(pred_, data):
-    y = data.get_label()
-    pred = 1 / (1 + np.exp(-pred_))
-    lift10 = _get_lift(y, pred, 0.1)
-    return '10%lift', lift10, True 
-def _get_lift(y, pred, k):
-        n_top = int(len(y) * k)
-        top_indices = pd.Series(pred).sort_values(ascending=False).head(n_top).index
-        return y[top_indices].mean() / y.mean()
-def _get_ks(model, X, y):
-        pred = model.predict(X)
-        ks = toad.metrics.KS(pred, y)
-        return ks

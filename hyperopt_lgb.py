@@ -12,9 +12,9 @@ class HyperOptLGB(object):
         self.fobj = kwargs.get('fobj')
         self.max_iterations = kwargs.get('max_iterations')
         self.record_train_process = kwargs.get("record_train_process")
-        self.ks_threshold = kwargs.get('ks_threshold')
+        self.auc_threshold = kwargs.get('auc_threshold')
+        self.randn = kwargs.get('randn')
         self.X_tr, self.X_val, self.y_tr, self.y_val, self.tr_orgidx, self.val_orgidx = self.split_data(self.data)
-        self.weight = pd.Series(np.ones(len(self.data.index)))
         self.trails = Trials()
     
     # 输入数据集，返回8:2切分的训练验证集 & 字典形式储存的各机构在训练集验证集的索引，确保输入的数据集有new_org, new_target列
@@ -27,7 +27,7 @@ class HyperOptLGB(object):
         tr_orgidx, val_orgidx, tr_idx, val_idx = {}, {}, [], []
         
         # 分层抽样
-        splitter = StratifiedShuffleSplit(n_splits=1, random_state=42, train_size=0.8)
+        splitter = StratifiedShuffleSplit(n_splits=1, random_state=self.randn, train_size=0.8)
         
         for org in data.new_org.unique():
             tmp_data = data[data.new_org==org].copy()
@@ -85,10 +85,8 @@ class HyperOptLGB(object):
     
     ## 根据model和输入数据返回带权重&不带权重计算下的auc ks，替代weighted_metric用，只计算最后一次
     def single_weighted_metric(self, model, X, y, w):
-        
         pred = model.predict(X)
         pred = pd.Series(pred, index=X.index)
-        
         auc_w, auc = roc_auc_score(y, pred, sample_weight=w), roc_auc_score(y, pred)
         fpr, tpr, _ = roc_curve(y, pred, sample_weight=w)
         
@@ -121,9 +119,18 @@ class HyperOptLGB(object):
         simpler_records = pd.DataFrame(simpler_records)
         
         return simpler_records
-        
+    
     # 每组参数下分机构cv训练, 返回每个机构做oos下的train val oos ks, oos ks
     def train_epoch_(self, org, param):
+        
+        broadcast_with_tar = param.get('broadcast_with_tar')
+        balanced_badrate = param.get("balanced_badrate")
+        
+        ## 根据超参数坏样率得出权重weight
+        weight_tr = re_weight_by_org(self.y_tr, self.tr_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
+        weight_val = re_weight_by_org(self.y_val, self.val_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
+        weight = pd.concat([weight_tr, weight_val], axis=0)
+        #weight = pd.Series(np.where(self.data['new_target']==1, 4, 1), index=self.data.index)
         
         tr_idxs, val_idxs = set(self.X_tr.index), set(self.X_val.index)
         tr_idx, val_idx = self.tr_orgidx.get(org), self.val_orgidx.get(org)
@@ -131,7 +138,8 @@ class HyperOptLGB(object):
         # 除去当前org选出训练验证集
         X_tr_, y_tr_ = self.X_tr.loc[list(tr_idxs-set(tr_idx)), ], self.y_tr.loc[list(tr_idxs-set(tr_idx)), ]
         X_val_, y_val_ = self.X_val.loc[list(val_idxs-set(val_idx)), ], self.y_val.loc[list(val_idxs-set(val_idx)), ]
-        w_tr_, w_val_ = self.weight.loc[list(tr_idxs-set(tr_idx)), ], self.weight.loc[list(val_idxs-set(val_idx)), ]
+        w_tr_, w_val_ = weight.loc[list(tr_idxs-set(tr_idx)), ], weight.loc[list(val_idxs-set(val_idx)), ]
+        #w_tr_ = pd.Series(np.ones(X_tr_.shape[0]))
         
         # 去除的机构为oos
         X_oos, y_oos = pd.concat([self.X_tr.loc[tr_idx, ], self.X_val.loc[val_idx, ]], axis=0) , pd.concat([self.y_tr.loc[tr_idx, ], self.y_val.loc[val_idx, ]], axis=0)
@@ -148,17 +156,19 @@ class HyperOptLGB(object):
         train_set = lgb.Dataset(X_tr_, label=y_tr_, weight=w_tr_)
         val_set = lgb.Dataset(X_val_, label=y_val_, reference=train_set)
         oos_set = lgb.Dataset(X_oos, label=y_oos, reference=train_set)
-
+        
         ## 判断是否需要早停，如果用户参数中给出了早停则固定最大迭代次数为300，否则不设置早停
         if 'stopping_rounds' in param.keys():
             param.update({'num_iterations': 300})
-            callbacks.append([lgb.early_stopping(stopping_rounds=param.get('stopping_rounds')),
-                             lgb.record_evaluation(eval_results)])
+            callbacks.append(lgb.early_stopping(stopping_rounds=param.get('stopping_rounds')))
+            ## 因为早停会每次迭代都评估 因为直接设为评估自定义函数
+            self.record_train_process = True
             valid_sets = [train_set, val_set, oos_set]
             valid_names = ['train', 'val', 'oos']
         
         ## 判断是否开启自定义评估
         if self.record_train_process == True:
+            callbacks.append(lgb.record_evaluation(eval_results))
             valid_sets = [train_set, val_set, oos_set]
             valid_names = ['train', 'val', 'oos']
             feval = self.weighted_metric(weights)
@@ -177,11 +187,11 @@ class HyperOptLGB(object):
                           callbacks = callbacks
                          )
         
-        if len(eval_results) > 0:
+        if len(eval_results) > 0 and self.record_train_process == True:
             eval_results = pd.DataFrame(eval_results)
             eval_results['org'] = org
         
-        else:
+        if self.record_train_process == False:
             auc_w, auc, ks_w, ks, lift5, lift10 = self.single_weighted_metric(model, X_tr_, y_tr_, w_tr_)
             tmp0 = pd.DataFrame({'train':[[auc_w], [auc], [ks_w], [ks], [lift5], [lift10]]}, index=['auc_w', 'auc', 'ks_w', 'ks', '5%lift', '10%lift'])
             auc_w, auc, ks_w, ks, lift5, lift10 = self.single_weighted_metric(model, X_val_, y_val_, w_val_)
@@ -204,7 +214,7 @@ class HyperOptLGB(object):
         
         # 开启9个进程池运行lgb
         tasks = [(org, param) for org in self.tr_orgidx.keys()]
-        with Pool(9) as pool:
+        with Pool(5) as pool:
             records = pool.starmap(self.train_epoch_, tasks)
         for record in records:
             results = pd.concat([results, record], axis=0)
@@ -213,7 +223,7 @@ class HyperOptLGB(object):
         mean_val_ks, mean_oos_ks = np.mean(simpler_results['val_ks']), np.mean(simpler_results['oos_ks'])
         
         # 判断参数符合要求条件为每个机构做oos时的训练集和验证集ks差距在相对3%以下，否则不更新loss
-        if np.allclose(simpler_results['tr_ks'], simpler_results['val_ks'], rtol=self.ks_threshold) and np.allclose(simpler_results['tr_ks_w'], simpler_results['val_ks_w'], rtol=self.ks_threshold):
+        if np.allclose(simpler_results['tr_auc'], simpler_results['val_auc'], rtol=self.auc_threshold) and np.allclose(simpler_results['tr_auc_w'], simpler_results['val_auc_w'], rtol=self.auc_threshold):
             loss = -(0.5*mean_val_ks + 0.5*mean_oos_ks)
             status = STATUS_OK
         else:
@@ -223,8 +233,8 @@ class HyperOptLGB(object):
         end_time = time.time()
         display(f"当前组参数训练耗时：{np.round((end_time-begin_time)*1.0/60, 2)}分")
         
-        return {'loss': loss, 'param':param, 'mean_val_ks':mean_val_ks, 'mean_oos_ks':mean_oos_ks,
-                'simpler_results':simpler_results, 'results': results, 'status':status}
+        return {'loss': loss, 'param':param, 'status':status, 'randn':self.randn,
+                'mean_val_ks':mean_val_ks, 'mean_oos_ks':mean_oos_ks, 'simpler_results':simpler_results, 'results': results}
     
     # 该类的执行函数，返回trails
     def tpesearch_params(self):

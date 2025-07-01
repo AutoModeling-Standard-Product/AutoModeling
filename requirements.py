@@ -1,5 +1,5 @@
 ##-- package dependences
-## how to pip: !sudo /opt/conda3/bin/pip install -i http://192.168.101.40/pypi/simple --trusted-host 192.168.101.40 packageyouneeded
+## how to pip: !sudo /opt/conda3/bin/pip install -i http://192.168.101.40/pypi/simple --trusted-host 192.168.101.40 imbalanced-learn==0.6.2
 import pandas as pd
 import numpy as np
 import pickle
@@ -21,3 +21,10 @@ import time
 from functools import partial
 from multiprocessing import Pool
 import shap
+import joblib
+import sklearn
+from sklearn.neighbors import *
+import seaborn as sns
+import os
+from pathlib import Path
+import ast
