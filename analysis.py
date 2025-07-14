@@ -12,7 +12,6 @@ def drop_abnormal_ym(**kwargs)-> pd.DataFrame:
     display(f"输入data样本数为{data.shape[0]}, 限制每个机构每月坏样本数>={minYmBadsample}, 样本数>={minYmSample}")
     data = data[~condition]
     display(f"删去异常月份后数据大小为{data.shape[0]}")
-    display(data.head(1))
     return data
 
 def drop_highmiss_features(**kwargs)-> pd.DataFrame:
@@ -26,10 +25,10 @@ def drop_highmiss_features(**kwargs)-> pd.DataFrame:
     miss_org = miss_org[miss_org.高缺失机构个数>cnt]
     miss_channel = miss_channel[miss_channel.总缺失率>ratio]
     display(f"输入data列数为{data.shape[1]}")
-    deleted_feas = list(set(miss_channel.变量 + miss_org.变量).intersection(set(data.columns)))
+    deleted_feas = list(set(list(miss_channel.变量) + list(miss_org.变量)).intersection(set(data.columns)))
     data.drop(columns=deleted_feas, inplace=True)
     if len(deleted_feas)>0:
-        display(f"删去高缺失变量后data列数为{data.shape[1]}, 删去的变量是{deleted_feas}, 删除标准：1.变量在多个机构下不满足单机构缺失率条件, 2.变量在渠道或总体下不满足缺失率条件")
+        display(f"删去高缺失变量后data列数为{data.shape[1]}, 删去{len(deleted_feas)}列, 删除标准：1.变量在多个机构下不满足单机构缺失率条件, 2.变量在渠道或总体下不满足缺失率条件")
     else:
         display('全部变量都不满足删除条件')
     return data
@@ -38,15 +37,16 @@ def drop_lowiv_features(**kwargs) -> pd.DataFrame:
     data = kwargs.get('data').copy()
     res_iv_org = kwargs.get('res_iv_org')
     res_iv_channel = kwargs.get('res_iv_channel')
-    miniv = kwargs.get('miniv')
+    miniv_org = kwargs.get('miniv_org')
+    miniv_channel = kwargs.get("miniv_channel")
     cnt = kwargs.get('cnt')
-    res_iv_org['是低iv机构'] = np.where(res_iv_org['iv']<miniv, 1, 0)
+    res_iv_org['是低iv机构'] = np.where(res_iv_org['iv']<miniv_org, 1, 0)
     res_iv_org['低iv机构数'] = res_iv_org.groupby('变量')['是低iv机构'].transform('sum')
     drop_features = res_iv_org[res_iv_org.低iv机构数>cnt]['变量']
-    keep_features = res_iv_channel[res_iv_channel.iv>=miniv]['变量']
+    keep_features = res_iv_channel[res_iv_channel.iv>=miniv_channel]['变量']
     drop_features = list(set((set(drop_features)-set(keep_features))).intersection(data.columns))
     if len(drop_features)>0:
-        display(f"去除在{cnt}上个机构iv都小于{miniv} 且在任何渠道上iv都小于{miniv}的变量, 共{len(drop_features)}个")
+        display(f"去除在{cnt}上个机构iv都小于{miniv_org} 且在任何渠道上iv都小于{miniv_channel}的变量, 共{len(drop_features)}个")
         data.drop(columns=drop_features, inplace=True)
     else:
         display("没有符合删去条件的变量")
@@ -77,17 +77,19 @@ def drop_highcorrelation_features(**kwargs) -> pd.DataFrame:
     display(f'根据{channel}下iv值删去变量, 遍历高相似变量对直到变量对全为空, 每次迭代删除包含iv值最小的变量所在变量对')
     features = []
     drop_features = []
-    for v in indices:
-        features.append(v[0])
-        features.append(v[1])
-    while len(indices)>1:
+    
+    for idx in np.arange(indices.shape[0]):
+        features.append(indices.iloc[idx][0])
+        features.append(indices.iloc[idx][1])
+        
+    while indices.shape[0]>1:
         res = res_iv_channel[(res_iv_channel.变量.isin(features))&(res_iv_channel.渠道==channel)]
-        drop_ = list(res[res.iv==min(res.iv)]['变量'])
-        drop_features.append(drop_)
-        indices = [v for v in indices if v[0] not in drop_ and v[1] not in drop_]
+        drop_ = list(res[res.iv==np.min(res.iv)]['变量'])
+        drop_features += drop_
+        indices = indices[~((indices['0'].isin(drop_))|(indices['1'].isin(drop_)))]
         features = [v for v in features if v not in drop_]
 
-    drop_features = list(set(list(itertools.chain.from_iterable(drop_features))).intersection(set(data.columns)))
+    drop_features = list(set(drop_features).intersection(set(data.columns)))
     display(f'共删去{len(drop_features)}个变量')
     data.drop(columns=drop_features, inplace=True)
     return data

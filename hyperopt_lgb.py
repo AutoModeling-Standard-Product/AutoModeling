@@ -1,3 +1,7 @@
+from main.utils.requirements import *
+from main.utils.data_augmentation import *
+from main.utils.Inference import *
+
 class HyperOptLGB(object):
     '''
         init: data, params, fobj, weights, max_iteration
@@ -48,7 +52,7 @@ class HyperOptLGB(object):
     def _get_lift(self, y, pred, k):
         
         n_top = int(len(y) * k)
-        top_indices = pd.Series(pred).sort_values(ascending=False).head(n_top).index
+        top_indices = pd.Series(pred, index=y.index).sort_values(ascending=False).head(n_top).index
         
         return y[top_indices].mean() / y.mean()
             
@@ -125,12 +129,12 @@ class HyperOptLGB(object):
         
         broadcast_with_tar = param.get('broadcast_with_tar')
         balanced_badrate = param.get("balanced_badrate")
+        param['num_leaves'] = 2**param.get('max_depth')-1
         
         ## 根据超参数坏样率得出权重weight
         weight_tr = re_weight_by_org(self.y_tr, self.tr_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
         weight_val = re_weight_by_org(self.y_val, self.val_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
         weight = pd.concat([weight_tr, weight_val], axis=0)
-        #weight = pd.Series(np.where(self.data['new_target']==1, 4, 1), index=self.data.index)
         
         tr_idxs, val_idxs = set(self.X_tr.index), set(self.X_val.index)
         tr_idx, val_idx = self.tr_orgidx.get(org), self.val_orgidx.get(org)
@@ -139,7 +143,8 @@ class HyperOptLGB(object):
         X_tr_, y_tr_ = self.X_tr.loc[list(tr_idxs-set(tr_idx)), ], self.y_tr.loc[list(tr_idxs-set(tr_idx)), ]
         X_val_, y_val_ = self.X_val.loc[list(val_idxs-set(val_idx)), ], self.y_val.loc[list(val_idxs-set(val_idx)), ]
         w_tr_, w_val_ = weight.loc[list(tr_idxs-set(tr_idx)), ], weight.loc[list(val_idxs-set(val_idx)), ]
-        #w_tr_ = pd.Series(np.ones(X_tr_.shape[0]))
+#         w_tr_ = pd.Series(np.ones(X_tr_.shape[0]), index=X_tr_.index)
+#         w_val_ = pd.Series(np.ones(X_val_.shape[0]), index=X_val_.index)
         
         # 去除的机构为oos
         X_oos, y_oos = pd.concat([self.X_tr.loc[tr_idx, ], self.X_val.loc[val_idx, ]], axis=0) , pd.concat([self.y_tr.loc[tr_idx, ], self.y_val.loc[val_idx, ]], axis=0)
@@ -212,9 +217,9 @@ class HyperOptLGB(object):
         
         results = pd.DataFrame()
         
-        # 开启9个进程池运行lgb
+        # 开启10个进程池运行lgb
         tasks = [(org, param) for org in self.tr_orgidx.keys()]
-        with Pool(5) as pool:
+        with Pool(10) as pool:
             records = pool.starmap(self.train_epoch_, tasks)
         for record in records:
             results = pd.concat([results, record], axis=0)
@@ -222,9 +227,15 @@ class HyperOptLGB(object):
         simpler_results = self.extract_evalresult(results)
         mean_val_ks, mean_oos_ks = np.mean(simpler_results['val_ks']), np.mean(simpler_results['oos_ks'])
         
+        ## 防止内核关闭
+        import json
+        result = {'a':20}
+        with open("res.json", 'w') as f:
+            json.dump(result, f)
+        
         # 判断参数符合要求条件为每个机构做oos时的训练集和验证集ks差距在相对3%以下，否则不更新loss
         if np.allclose(simpler_results['tr_auc'], simpler_results['val_auc'], rtol=self.auc_threshold) and np.allclose(simpler_results['tr_auc_w'], simpler_results['val_auc_w'], rtol=self.auc_threshold):
-            loss = -(0.5*mean_val_ks + 0.5*mean_oos_ks)
+            loss = -mean_oos_ks
             status = STATUS_OK
         else:
             loss = np.Inf

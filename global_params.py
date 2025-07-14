@@ -1,4 +1,4 @@
-b# 随机种子管理
+# 随机种子管理
 random_states = {
     'spliter': 126,        # 数据集划分随机种子
     'resampler': 252,      # 采样器随机种子
@@ -46,7 +46,7 @@ resampler_ = None
 
 # 建模参数
 classifier_ = {
-    'type': lgb,                          # 选择建模算法，目前默认lgb
+    'type': 'lgb',                          # 选择建模算法，目前默认lgb
     'params': {                           # 这里给出一些固定的，不随调参过程而变动的参数
         'objective': 'binary',            
         'metric': 'auc',
