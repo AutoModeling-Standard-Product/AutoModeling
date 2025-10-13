@@ -5,7 +5,6 @@
 | multiprocessing      | 多进程库（修复python3.6及以下版本的多进程通信容量问题）  |
 | auto_modeling.ipynb  | notebook执行文件           |
 | pip_list.txt         | 依赖包列表                                  |
-
 | func.py              | 数据概览与清洗、变量筛选等基础函数              |
 | analysis.py          | 提供集成func.py的函数供用户调用从而完成功能     |
 | data_augmentation.py | 提供数据过采样及样本赋训练权重的方法            |
