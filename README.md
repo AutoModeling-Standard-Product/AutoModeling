@@ -1,12 +1,18 @@
 # AutoModeling
 
-| 文件目录             | 文件用途                                        |
+| 文件目录              | 文件用途                                        |
 | -------------------- | ----------------------------------------------- |
-| func.py              | 存储PartⅠⅡ（数据概览与清洗 变量筛选）的基础函数 |
+| multiprocessing      | 多进程库（修复python3.6及以下版本的多进程通信容量问题）  |
+| auto_modeling.ipynb  | notebook执行文件           |
+| pip_list.txt         | 依赖包列表                                  |
+
+| func.py              | 数据概览与清洗、变量筛选等基础函数              |
 | analysis.py          | 提供集成func.py的函数供用户调用从而完成功能     |
-| basic analysis.ipynb | 交互式执行文件用于展示PartⅠ Ⅱ功能的使用顺序     |
-
-
+| data_augmentation.py | 提供数据过采样及样本赋训练权重的方法            |
+| global_parameters.py | 全流程的预设参数，请在执行notebook前先编写好该部分 |
+| hyperopt_lgb.py      | 基于贝叶斯优化的机构留一法调参     |
+| Inference.py | 最优参数模型拟合及模型报告生成 |
+| requirements.py | 导入库 |
 
 ## func.py
 
