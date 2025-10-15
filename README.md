@@ -14,16 +14,16 @@
 | requirements.py | 导入库 |
 
 # 使用流程：
-1. 请预先手动设置global_parameters.py内的所有参数。
+1. 请预先手动设置global_parameters.py内的所有参数：
  - params4eda参数channel请保留渠道“整体”，
  - params4eda参数，请注意各主键名称的设置与数据源对应字段名称一致；
  - paramspace和params4hyperopt为建模调参参数，可直接沿用或根据数据情况自定义各指标值，建议不要修改指标结构；
  - 如果有需要查看某些子分或重要变量的分箱情况，请设置params4inference中的child_score(当前脚本只支持一个child_score的设置)。
 2. 依次执行auto_modeling.ipynb的各单元格：
  - 导入所需库及导入执行类auto_ML；
- - 创建对象auto_ml并执行数据清洗筛选，如不需要相关性及高噪声筛选，请注释step 5及step 6；
- - 开始调参（finetuingParams）
- - 创建报告（auto_ml.inference_model）
+ - 创建对象auto_ml并执行数据清洗筛选，如不需要相关性及高噪声筛选，请于上一步注释掉step 5及step 6；
+ - 开始调参（finetuingParams）；
+ - 创建报告（inference_model）。
 
      
 # 以下为数据筛选环节的函数简介，供参考
