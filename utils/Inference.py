@@ -213,6 +213,13 @@ class Inference(object):
             else:
                 return f"[{bin_edges[bin_label-1]}, {bin_edges[bin_label]})"
 
+        def reformat_bin(bin_: str):
+            up, down = bin_[0], bin_[1]
+            left, right = bin_[1: -1].split(',')
+            left = round(float(left), 1 if left == int(float(left)) else 6)
+            right = round(float(left), 1 if right == int(float(left)) else 6)
+            return f'{up}{left}, {right}{down}'
+
         tmp['bin_'] = combiner.transform(tmp[[col]])[[col]]
         tmp['bin'] = tmp['bin_'].apply(lambda x: _bin_to_interval(x, bin_edges))
         tmp['bin'] = tmp['bin'].astype(str)
@@ -227,14 +234,17 @@ class Inference(object):
                 '分箱负样本数': len(x) - x['new_target'].sum(),
                 '分箱ks': round(toad.metrics.KS(x[col], x['new_target']), 4),
                  ## 默认使用等频5分箱计算每个x的iv值
-                '分箱iv': calculate_iv(x[[col]], x['new_target'], 'quantile', 5)[0],
                 '分箱lift': round(x['new_target'].mean() / tmp['new_target'].mean(), 2),
                 '召回率': round(sum(x['new_target']) * 1.0 / sum(tmp['new_target']) ,4),
                 '特异度': round((len(x)-sum(x['new_target'])) * 1.0 / (tmp.shape[0] - sum(tmp['new_target'])), 4)
             })
         )
-        
-        res = pd.DataFrame(res).reset_index(drop=True).sort_values(by=['分箱'])
+
+        res['分箱woe'] = np.log(res['召回率'] / res['特异度']) 
+        res['分箱iv'] = res['分箱woe'] * (res['召回率'] - res['特异度']) 
+        res['start'] = res['分箱'].apply(lambda x: float(x.split(',')[0][1: ]))
+        res['end'] = res['分箱'].apply(lambda x: float(x.split(',')[1][: -1]))
+        res = pd.DataFrame(res).sort_values(by=['start', 'end']).reset_index(drop=True).drop(columns=['start', 'end'])
         
         res['分箱iv'].replace({np.inf: 0}, inplace=True)
         res['总IV'] = sum(res['分箱iv'])
