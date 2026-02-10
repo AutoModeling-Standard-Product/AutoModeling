@@ -1,4 +1,4 @@
-from main.utils.requirements import *
+from utils.requirements import *
 
 params4eda = {
     'data_pth': '', ## 数据集路径，最好给绝对路径
@@ -59,7 +59,7 @@ params4hyperopt = {'params': paramspace,
                    'randn':42 ## 训练集验证机切分随机数种子
 }
 
-params4inference = {'score_name': ## 模型评分自定义名称
-                    'child_score': ## 入模子分，为了模型效果比对使用，暂时只支持输入单个
+params4inference = {'score_name': None,## 模型评分自定义名称
+                    'child_score':None, ## 入模子分，为了模型效果比对使用，暂时只支持输入单个
                     'score_transform_func':None ## 分数转换函数
 }

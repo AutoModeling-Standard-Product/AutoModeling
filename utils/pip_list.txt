@@ -1,10 +1,12 @@
-## 任何特定版本或缺失的包请添加到本文件来
-toad==0.0.64
-imbalanced-learn==0.6.2
-scikit-learn==0.24.2
-shap==0.36.0
-numba==0.48
-llvmlite==0.31.0
-mxnet==1.4.0
+imbalanced-learn
+scikit-learn
+shap
+numba
+llvmlite
+mxnet
 pathos
-utils/communities-master.zip
+hyperopt
+lightgbm
+imblearn
+scipy==1.2.1
+tqdm

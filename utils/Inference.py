@@ -1,6 +1,6 @@
-from main.utils.data_augmentation import *
-from main.utils.requirements import *
-from main.utils.analysis import *
+from utils.data_augmentation import *
+from utils.requirements import *
+from utils.analysis import *
 
 class Inference(object):
     '''
@@ -102,8 +102,8 @@ class Inference(object):
         
         X_tr, X_val, y_tr, y_val, tr_orgidx, val_orgidx = self.inference_split_data(data, False)
         if balanced_badrate is not None:
-#             w_tr = re_weight_by_org(y_tr, tr_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
-             w_tr = pd.Series(np.where(y_tr==1, balanced_badrate, 1), index=y_tr.index)
+            w_tr = re_weight_by_org(y_tr, tr_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
+#              w_tr = pd.Series(np.where(y_tr==1, balanced_badrate, 1), index=y_tr.index)
         else:
             w_tr = pd.Series(np.ones(len(X_tr)), index=X_tr.index)
         train_set = lgb.Dataset(X_tr, label=y_tr, weight=w_tr)
@@ -125,7 +125,6 @@ class Inference(object):
         
         self.model = lgb.train(
                           self.param,
-                          verbose_eval=0, 
                           train_set = train_set, 
                           valid_sets = val_set,
                           callbacks = callbacks
@@ -153,7 +152,6 @@ class Inference(object):
         ## n-1个机构全量样本下训练
         model = lgb.train(
                       param,
-                      verbose_eval=0, 
                       train_set = train_set
                      )
         
@@ -163,8 +161,8 @@ class Inference(object):
         auc_, ks_, lift3_, lift5_, lift10_ = self.inference_childscore_metric(X_oos[~X_oos.index.isin(nan_idx)][self.child_score], y_oos[~y_oos.index.isin(nan_idx)])
         cvoos_result = pd.concat([cvoos_result, pd.DataFrame({'oos': org, 'score': self.score_name, 'auc':auc, 'ks':ks, 
                                                 '3%lift':lift3, '5%lift':lift5, '10%lift':lift10}, index=['0'])], axis=0)
-        cvoos_result = pd.concat([cvoos_result, pd.DataFrame({'oos': org, 'score': self.child_score, 'auc':auc_, 'ks':ks_, 
-                                                '3%lift':lift3_, '5%lift':lift5_, '10%lift':lift10_}, index=['0'])], axis=0)
+#         cvoos_result = pd.concat([cvoos_result, pd.DataFrame({'oos': org, 'score': self.child_score, 'auc':auc_, 'ks':ks_, 
+#                                                 '3%lift':lift3_, '5%lift':lift5_, '10%lift':lift10_}, index=['0'])], axis=0)
         return cvoos_result
     
     ## 目前仅支持对不设置早停的参数生成oos结果
@@ -175,8 +173,8 @@ class Inference(object):
         
         self.X_tr, _, self.y_tr, _, self.tr_orgidx, _ = self.inference_split_data(data, False)
         if balanced_badrate is not None:
-#             self.w_tr = re_weight_by_org(self.y_tr, self.tr_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
-            self.w_tr = pd.Series(np.where(self.y_tr==1, balanced_badrate, 1), index=self.y_tr.index)
+            self.w_tr = re_weight_by_org(self.y_tr, self.tr_orgidx, 0.5, broadcast_with_tar, balanced_badrate)
+#             self.w_tr = pd.Series(np.where(self.y_tr==1, balanced_badrate, 1), index=self.y_tr.index)
         else:
             self.w_tr = pd.Series(np.ones(self.X_tr.shape[0]), index=self.X_tr.index)
         
@@ -185,7 +183,7 @@ class Inference(object):
             shared_list = manager.list()
             tasks = [(shared_list, org, self.param) for org in self.tr_orgidx.keys()]
             
-            with Pool(5) as pool:
+            with Pool(10) as pool:
                 records = pool.starmap(self.refit_cvoos_, tasks)
         
         for record in records:
@@ -257,6 +255,36 @@ class Inference(object):
         
         return res
     
+    def get_gain(self, model, dt):
+        model_gain = pd.DataFrame(list(dict(zip(model.feature_name(), model.feature_importance(importance_type='gain'))).items()))
+        model_gain['2'] = round(model_gain[1] / sum(model_gain[1]), 2)
+        model_gain.columns = ['变量', 'gain', 'gain占比']
+
+        model_gain_1 = pd.DataFrame(list(dict(zip(model.feature_name(), model.feature_importance(importance_type='split'))).items()))
+        model_gain_1['2'] = round(model_gain_1[1] / sum(model_gain_1[1]), 2)
+        model_gain_1.columns = ['变量', 'split', 'split占比']
+
+        model_gain = model_gain.merge(model_gain_1, on=['变量'], how='inner')
+        model_gain.sort_values(by=['gain'], ascending=False, inplace=True)
+        model_gain.reset_index(drop=True, inplace=True)
+        model_gain['rank'] = model_gain.index+1
+
+        res = []
+        for fea in model.feature_name():
+            iv, nan_ = self.single_fea_metric(dt[fea], dt['new_target'])
+            res.append({'变量':fea, 'iv': iv, 'nan占比': nan_})
+        res = pd.DataFrame(res)
+
+        model_gain = model_gain.merge(res, on=['变量'], how='left')
+
+        return model_gain
+
+    def single_fea_metric(self, x, y):
+        iv, _, _ = calculate_iv(x, y, 'dt', 5)
+        iv = np.round(iv, 2)
+        nan_ = np.round(x.isna().mean(), 2)
+        return iv, nan_
+
     def generate_report(self, data, oos_data):
         try:
             Path(self.store_pth+"/train logs/auc").mkdir(parents=True, exist_ok=True)
@@ -283,6 +311,7 @@ class Inference(object):
             self.refit(data)
         else:
             print("step 2 加载输入的模型")
+            
         
         ## 得到真正的oos set结果
         cv_oos_result = pd.DataFrame()
@@ -291,29 +320,56 @@ class Inference(object):
             auc, ks, lift3, lift5, lift10 = self.inference_oos_metric(self.model, oos_data_[self.model.feature_name()], oos_data_['new_target'])
             cv_oos_result = pd.concat([cv_oos_result, pd.DataFrame({'oos': org, 'score':self.score_name, 'auc':auc, 'ks':ks, '3%lift':lift3, 
                                                     '5%lift':lift5, '10%lift':lift10}, index=['0'])], axis=0)
-            ## 计算子分
-            nan_idx = list(oos_data_[oos_data_[self.child_score].isna()].index)
-            auc_, ks_, lift3_, lift5_, lift10_ = self.inference_childscore_metric(oos_data_[~oos_data_.index.isin(nan_idx)][self.child_score], oos_data_[~oos_data_.index.isin(nan_idx)]['new_target'])
-            cv_oos_result = pd.concat([cv_oos_result, pd.DataFrame({'oos': org, 'score':self.child_score, 'auc':auc_, 'ks':ks_, '3%lift':lift3_, 
-                                                    '5%lift':lift5_, '10%lift':lift10_}, index=['0'])], axis=0)
+#             ## 计算子分
+#             nan_idx = list(oos_data_[oos_data_[self.child_score].isna()].index)
+#             auc_, ks_, lift3_, lift5_, lift10_ = self.inference_childscore_metric(oos_data_[~oos_data_.index.isin(nan_idx)][self.child_score], oos_data_[~oos_data_.index.isin(nan_idx)]['new_target'])
+#             cv_oos_result = pd.concat([cv_oos_result, pd.DataFrame({'oos': org, 'score':self.child_score, 'auc':auc_, 'ks':ks_, '3%lift':lift3_, 
+#                                                     '5%lift':lift5_, '10%lift':lift10_}, index=['0'])], axis=0)
         
         cv_oos_result = pd.concat([cv_trainoos_result, cv_oos_result], axis=0)
         
         ## 保存gain值图
-        self.feas_gain = pd.DataFrame(list(dict(zip(self.model.feature_name(), self.model.feature_importance(importance_type='gain'))).items()))
-        self.feas_gain = self.feas_gain.sort_values(by=1, ascending=False)
-        self.feas_gain['2'] = round(self.feas_gain[1] / sum(self.feas_gain[1]), 2)
-        self.feas_gain.columns = ['变量', 'gain', 'gain值占比']
+        self.feas_gain = self.get_gain(self.model, data)
         
-        ##绘制shap图
-        #explain = shap.TreeExplainer(self.model)
-        #shap_values = explain.shap_values(self.oot_data[self.model.booster_.feature_name()])
-        #shap.summary_plot(shap_values[1], self.oot_data[self.model.booster_.feature_name()], max_display=20)
-        #plt.savefig(self.store_pth+"shap_summary.jpg", dpi=300, bbox_inches="tight")
-        #plt.close()
+        #绘制shap图
+#         explain = shap.TreeExplainer(self.model)
+#         shap_values = explain.shap_values(self.oot_data[self.model.booster_.feature_name()])
+#         shap.summary_plot(shap_values[1], self.oot_data[self.model.booster_.feature_name()], max_display=20)
+#         plt.savefig(self.store_pth+"shap_summary.jpg", dpi=300, bbox_inches="tight")
+#         plt.close()
         
         data[self.score_name] = np.round(self.model.predict(data[self.model.feature_name()]), 3)
         oos_data[self.score_name] = np.round(self.model.predict(oos_data[self.model.feature_name()]), 3)
+        
+        train_result = data.groupby('new_org').apply(lambda x: pd.DataFrame({
+            '机构': x['new_org'].iloc[0],
+            '数据量': x.shape[0],
+            '黑样本量': x['new_target'].sum(),
+            '是否为贷外': '否',
+            '全量ks': toad.metrics.KS(x[self.score_name], x['new_target']),
+            '全量auc': roc_auc_score(x['new_target'], x[self.score_name]),
+         }, index=[''])).reset_index(drop=True)
+        
+        oos_result = oos_data.groupby('new_org').apply(lambda x: pd.DataFrame({
+            '机构': x['new_org'].iloc[0],
+            '数据量': x.shape[0],
+            '黑样本量': x['new_target'].sum(),
+            '是否为贷外': '是',
+            '全量ks': toad.metrics.KS(x[self.score_name], x['new_target']),
+            '全量auc': roc_auc_score(x['new_target'], x[self.score_name]),
+         }, index=[''])).reset_index(drop=True)
+                                  
+        wo_cv_result = pd.concat([train_result, oos_result], axis=0)
+        cv_oos_result = cv_oos_result.merge(wo_cv_result, left_on=['oos'], right_on=['机构'], how='left')
+        cv_oos_result['ks差异'] = cv_oos_result['全量ks'] - cv_oos_result['ks']
+        cv_oos_result['auc差异'] = cv_oos_result['全量auc'] - cv_oos_result['auc']
+        cv_oos_result = cv_oos_result[['机构', '是否为贷外', '数据量', '黑样本量', '全量ks', 'ks', 'ks差异', 
+                                       '全量auc', 'auc', 'auc差异', '3%lift',
+                                      '5%lift', '10%lift']]
+        cv_oos_result.columns = ['机构', '是否为贷外', '数据量', '黑样本量', '全量ks', 'cv ks', 'ks差异', 
+                                       '全量auc', 'cv auc', 'auc差异', 'cv 3%lift',
+                                      'cv 5%lift', 'cv 10%lift']
+        cv_oos_result.sort_values(by=['是否为贷外', 'ks差异'], inplace=True)
         
         if self.score_transform_func is not None:
             data[self.score_name]  = self.score_transform_func(data[self.score_name])
@@ -333,13 +389,13 @@ class Inference(object):
         fig2.savefig(self.store_pth+"/train logs/trend/评分箱线图.jpg")
         plt.close()
         
-        print("step 3 计算模型得分&子分等频10分箱")
+        print("step 3 计算模型得分&子分等频10|5分箱")
         bins_results = self.fixedbins_results(data, self.score_name, 10)
         bins_results_oos = self.fixedbins_results(oos_data, self.score_name, 10)
-        bins_results_childscore = self.fixedbins_results(data, self.child_score, 10)
-        bins_results_oos_childscore = self.fixedbins_results(oos_data, self.child_score, 10)
+        bins_results_childscore = self.fixedbins_results(data, self.child_score, 5)
+        bins_results_oos_childscore = self.fixedbins_results(oos_data, self.child_score, 5)
         
-        print("step 4 分机构计算模型得分&子分等频10分箱")
+        print("step 4 分机构计算模型得分&子分等频10|5分箱")
         bins_results_org = pd.DataFrame()
         for org in data.new_org.unique():
             tmp_data = data[data.new_org==org].copy()
@@ -353,7 +409,7 @@ class Inference(object):
             bins_results_org = pd.concat([bins_results_org, bins_results_org_], axis=0)
             
             try:
-                bins_results_org_ = self.fixedbins_results(tmp_data, self.child_score, 10)
+                bins_results_org_ = self.fixedbins_results(tmp_data, self.child_score, 5)
             except:
                 print(f"{org}子分分为10箱中有部分箱全为0|1, 改为3分箱")
                 bins_results_org_ = self.fixedbins_results(tmp_data, self.child_score, 3)
@@ -372,7 +428,6 @@ class Inference(object):
         
         print("step 6 生成训练过程图")
         for org in self.results.org.unique():
-        
             results_auc = self.results[(self.results.org==org) & (self.results.idx=='auc_wo')]
             results_auc_w = self.results[(self.results.org==org) & (self.results.idx=='auc_w')]
             results_ks = self.results[(self.results.org==org) & (self.results.idx=='ks')]
@@ -495,7 +550,6 @@ class Inference(object):
         self.param['randn'] = self.randn
         pd.DataFrame(self.param, index=['0']).to_excel(writer, sheet_name='模型参数', index=False)
 
-        writer.save()
         writer.close()
         
         print("已完成模型报告")

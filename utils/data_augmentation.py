@@ -10,15 +10,15 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, accuracy_score, roc_auc_score, log_loss
 
 # imblearn和TensorFlow可能会存在导入顺序的问题，解决方法为二次导入
-try:
-    from imblearn.over_sampling import RandomOverSampler, ADASYN, SMOTE, SMOTENC, BorderlineSMOTE, KMeansSMOTE, SVMSMOTE
-    from imblearn.under_sampling import RandomUnderSampler, TomekLinks, ClusterCentroids
-except:
-    from imblearn.over_sampling import RandomOverSampler, ADASYN, SMOTE, SMOTENC, BorderlineSMOTE, KMeansSMOTE, SVMSMOTE
-    from imblearn.under_sampling import RandomUnderSampler, TomekLinks, ClusterCentroids
+# try:
+#     from imblearn.over_sampling import RandomOverSampler, ADASYN, SMOTE, SMOTENC, BorderlineSMOTE, KMeansSMOTE, SVMSMOTE
+#     from imblearn.under_sampling import RandomUnderSampler, TomekLinks, ClusterCentroids
+# except:
+#     from imblearn.over_sampling import RandomOverSampler, ADASYN, SMOTE, SMOTENC, BorderlineSMOTE, KMeansSMOTE, SVMSMOTE
+#     from imblearn.under_sampling import RandomUnderSampler, TomekLinks, ClusterCentroids
 
-from scipy import special, optimize
-from scipy.misc import derivative
+# from scipy import special, optimize
+# from scipy.misc import derivative
 
 
 def resampling(

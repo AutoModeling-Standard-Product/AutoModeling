@@ -1,5 +1,5 @@
-from main.utils.requirements import *
-from main.utils.data_augmentation import *
+from utils.requirements import *
+from utils.data_augmentation import *
 
 class HyperOptLGB(object):
     '''
@@ -49,6 +49,7 @@ class HyperOptLGB(object):
     
     def _get_lift(self, y, pred, k):
         
+        y = pd.Series(y)
         n_top = int(len(y) * k)
         top_indices = pd.Series(pred, index=y.index).sort_values(ascending=False).head(n_top).index
         
@@ -78,9 +79,9 @@ class HyperOptLGB(object):
             lift10, lift5 = self._get_lift(y, pred, 0.1), self._get_lift(y, pred, 0.05)
             
             return [
-                    ('auc_wo',auc,True), ('auc_w',auc_w,True),
-                    ('ks_w',ks_w,True), ('ks',ks,True),
-                    ('5%lift',lift5,True), ('10%lift',lift10,True)
+                    ('auc_wo',float(auc),True), ('auc_w',float(auc_w),True),
+                    ('ks_w',float(ks_w),True), ('ks',float(ks),True),
+                    ('5%lift',float(lift5),True), ('10%lift',float(lift10),True)
                 ]
         
         return _weighted_metric
@@ -181,7 +182,6 @@ class HyperOptLGB(object):
         ## valid_set若非空则中第一个非训练集的数据集是唯一决定早停的依据，评价方式是param中的metric, 与feval无关
         model = lgb.train(
                           param,
-                          verbose_eval=0, 
                           train_set = train_set, 
                           valid_sets = valid_sets,
                           #  feval = ['auc', get_ks_func, get_lift_func],
@@ -220,7 +220,7 @@ class HyperOptLGB(object):
         with Manager() as manager:
             shared_list = manager.list()
             tasks = [(shared_list, org, param) for org in self.tr_orgidx.keys()]
-            with Pool(15) as pool:
+            with Pool(10) as pool:
                 records = pool.starmap(self.train_epoch_, tasks)
             for record in records:
                 results = pd.concat([results, record], axis=0)
@@ -233,7 +233,7 @@ class HyperOptLGB(object):
             loss = -mean_val_ks
             status = STATUS_OK
         else:
-            loss = np.Inf
+            loss = np.inf
             status = STATUS_FAIL
         
          ## 防止内核关闭

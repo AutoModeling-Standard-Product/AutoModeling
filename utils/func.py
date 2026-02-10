@@ -76,17 +76,20 @@ def get_dataset(**kwargs) -> pd.DataFrame:
     assert type(key_colNames) == list, '主键key_colNames必须为list类型'
     
     try:
-        data = pd.read_csv(data_pth, parse_dates=[date_colName], encoding=data_encode)
-    except Exception as e1:
+        data = pd.read_parquet(data_pth)
+    except:
         try:
-            data = pd.read_xlsx(data_pth, parse_dates=[date_colName], encoding=data_encode)
-        except Exception as e2:
+            data = pd.read_csv(data_pth, parse_dates=[date_colName], encoding=data_encode)
+        except Exception as e1:
             try:
-                print("pickle文件无法应用use_cols, 读取全部数据")
-                data = pd.read_pickle(data_pth)
-            except Exception as e3:
-                print(e1+"   "+e2+"   "+e3)
-                return
+                data = pd.read_xlsx(data_pth, parse_dates=[date_colName], encoding=data_encode)
+            except Exception as e2:
+                try:
+                    print("pickle文件无法应用use_cols, 读取全部数据")
+                    data = pd.read_pickle(data_pth)
+                except Exception as e3:
+                    print(e1+"   "+e2+"   "+e3)
+                    return
     data.drop(columns=drop_colNames, inplace=True)
     print(f"{drop_colNames}被去除")
     try:
@@ -121,8 +124,55 @@ def get_dataset(**kwargs) -> pd.DataFrame:
     return data
 
 
+def calculate_bsi(tr_x, tr_y, val_x, val_y, q):
+    df_tr = pd.concat([tr_x, tr_y], axis=1)
+    df_tr.columns = ['x', 'y']
+    df_tr_wo_na = df_tr.dropna()
+    df_tr_na = df_tr[df_tr['x'].isna()]
+    df_tr_na['bin'] = 'NaN'
+    
+    df_val = pd.concat([val_x, val_y], axis=1)
+    df_val.columns = ['x', 'y']
+    df_val_wo_na = df_val.dropna()
+    df_val_na = df_val[df_val['x'].isna()]
+    df_val_na['bin'] = 'NaN'
+    
+    _, edge = pd.qcut(df_tr_wo_na['x'], q=q, duplicates='drop', retbins=True)
+    
+    edge = [-np.inf]+list(np.sort(edge))+[np.inf]
+    
+    df_tr_wo_na['bin'] = pd.cut(df_tr_wo_na['x'], bins=edge, include_lowest=False)
+    df_val_wo_na['bin'] = pd.cut(df_val_wo_na['x'], bins=edge, include_lowest=False)
+    
+    df_tr = pd.concat([df_tr_wo_na, df_tr_na], axis=0)
+    df_val = pd.concat([df_val_wo_na, df_val_na], axis=0)
+    
+    df_tr_bd = pd.DataFrame(df_tr.groupby('bin')['y'].agg(['mean', 'count', 'sum']))
+    df_tr_bd['分箱'] = df_tr_bd.index
+    df_val_bd = pd.DataFrame(df_val.groupby('bin')['y'].agg(['mean', 'sum']))
+    df_val_bd['分箱'] = df_val_bd.index
+    
+    df_bsi = df_tr_bd.merge(df_val_bd, on='分箱', how='inner')
+    df_bsi = df_bsi[['分箱', 'mean_x', 'mean_y', 'sum_x', 'sum_y']]
+    df_bsi['mm_mean_x'] = df_bsi['mean_x'] / np.sum(df_bsi['mean_x']) 
+    df_bsi['mm_mean_y'] = df_bsi['mean_y'] / np.sum(df_bsi['mean_y'])
+    df_bsi['recall_x'] = df_bsi['sum_x'] / df_bsi.sum_x.sum()
+    df_bsi['recall_y'] = df_bsi['sum_y'] / df_bsi.sum_y.sum()
+    
+    df_bsi['bsi_bdrate'] = df_bsi.apply(lambda x: (x.mean_x-x.mean_y) * np.log(1.0 * (x.mean_x+1e-10) / (x.mean_y+1e-10)), axis=1)
+    df_bsi['bsi_bdrate_mm'] = df_bsi.apply(lambda x: (x.mm_mean_x-x.mm_mean_y) * np.log(1.0 * (x.mm_mean_x+1e-10) / (x.mm_mean_y+1e-10)), axis=1)
+    df_bsi['bsi_recall'] =  df_bsi.apply(lambda x: (x.recall_x-x.recall_y) * np.log(1.0 * (x.recall_x+1e-10) / (x.recall_y+1e-10)), axis=1)
+    
+    df_bsi.columns = ['分箱', '基准坏样率', '对照坏样率', '基准坏样本数', '对照坏样本数', '基准归一化坏样率', '对照归一化坏样率',
+                        '基准召回率', '对照召回率', 'BSI坏样率', 'BSI归一化坏样率', 'BSI召回率']
+    
+    bsi_bdrate = np.round(df_bsi['BSI坏样率'].sum(axis=0), 4)
+    bsi_bdrate_mm = np.round(df_bsi['BSI归一化坏样率'].sum(axis=0), 4)
+    bsi_recall = np.round(df_bsi['BSI召回率'].sum(axis=0), 4)
+    return bsi_bdrate, bsi_bdrate_mm, bsi_recall,  df_bsi
+
 def calculate_psi(base, current):
-    sorted_base = sorted(base)
+    sorted_base = np.sort(base)
     n = len(sorted_base)
     edges = []
     for p in np.arange(0, 110, 10):
@@ -135,10 +185,11 @@ def calculate_psi(base, current):
             fraction = index - lower_idx
             edges.append(sorted_base[lower_idx]+fraction*(sorted_base[upper_idx]-sorted_base[lower_idx]))
     
-    # 扩展 current，将在edges外的数据归于距离最近的一箱
-    current_clipped = np.clip(current, edges[0], edges[-1])
+    
+    edges = [-np.inf]+list(np.sort(list(set([v for v in edges if v is not np.nan])))) + [np.inf, np.nan]
+#     current_clipped = np.clip(current, edges[0], edges[-1])
     base_cnt, _ = np.histogram(base, bins=edges)
-    current_cnt, _ = np.histogram(current_clipped, bins=edges)
+    current_cnt, _ = np.histogram(current, bins=edges)
     base_percentage = 1.0 * base_cnt / base_cnt.sum()
     current_percentage = 1.0 * current_cnt / current_cnt.sum()
     
@@ -334,12 +385,13 @@ def detect_correlation(**kwargs) -> pd.DataFrame:
 def get_fixed_lgb(max_depth=5, n_estimators=100)->lgb.LGBMClassifier:
     params_dict = {
         'objective':'binary',
-        'split':'gain',
+        'boosting_type': 'gbdt',
         'learning_rate':0.05,
         'max_depth':max_depth,
-        'min_child_samples':20,
+        'min_child_samples':2000,
         'min_child_weight':20,
         'n_estimators':n_estimators,
-        'num_leaves':2^max_depth - 1}
+        'num_leaves':2^max_depth - 1,
+        }
     clf = lgb.LGBMClassifier(**params_dict)
     return clf
