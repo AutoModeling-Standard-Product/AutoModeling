@@ -1,5 +1,6 @@
 from utils.requirements import *
 
+## 数据分析相关函数
 def org_analysis(data: pd.DataFrame)-> pd.DataFrame:
     assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
     try:
