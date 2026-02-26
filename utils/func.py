@@ -1,6 +1,6 @@
 from utils.requirements import *
 
-## 数据分析相关函数
+# new
 def org_analysis(data: pd.DataFrame)-> pd.DataFrame:
     assert all(v in data.columns for v in ['new_org', 'new_date', 'new_date_ym', 'new_target']), "输入的数据列不符合命名要求"
     try:
@@ -91,8 +91,9 @@ def get_dataset(**kwargs) -> pd.DataFrame:
                 except Exception as e3:
                     print(e1+"   "+e2+"   "+e3)
                     return
-    data.drop(columns=drop_colNames, inplace=True)
-    print(f"{drop_colNames}被去除")
+    if drop_colNames:
+        data.drop(columns=drop_colNames, inplace=True)
+        print(f"{drop_colNames}被去除")
     try:
         print(f'原始数据有{data.shape[0]}条, 根据{key_colNames}去重且只保留标签列[0,1]的数据')
         data = data[data[y_colName].isin([0, 1])]
@@ -120,8 +121,8 @@ def get_dataset(**kwargs) -> pd.DataFrame:
         print(e+'数据获取失败')
         return None
     
-    display(f"原始数据大小为{data.shape}")
-    display(data.head(1))
+    print(f"原始数据大小为{data.shape}")
+    print(data.head(1))
     return data
 
 
