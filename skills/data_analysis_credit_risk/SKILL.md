@@ -9,7 +9,7 @@ description: Credit risk data cleaning and variable screening pipeline for pre-l
 
 ```bash
 # 运行完整的数据清洗流程
-python ".github/skills/data analysis for credit risk/scripts/example.py"
+python ".github/skills/data_analysis_credit_risk/scripts/example.py"
 ```
 
 ## 完整流程说明
